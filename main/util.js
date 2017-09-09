@@ -75,9 +75,10 @@ exports.RemoteDevice = class {
 };
 
 exports.Message = class {
-    constructor(event, data, device, who = null) {
+    constructor(event, data, device, who = null, options) {
         this._event = event;
         this._dataString = data;
+        this._options = options;
         try {
             this._data = JSON.parse(data);
         } catch (_) {
@@ -105,5 +106,9 @@ exports.Message = class {
 
     get who() {
         return this._who;
+    }
+
+    get options() {
+        return this._options;
     }
 };

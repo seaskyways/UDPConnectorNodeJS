@@ -32,11 +32,13 @@ server.on('error', (err) => {
 
 let parseMessage = function (msg, rinfo) {
     let colonPositions = [];
+    let hashPositions = [];
     for (let i = 0; i < msg.length; i++) {
-        if (colonPositions.length > 2) break;
         if (msg[i] === ":" && msg[i - 1] !== "\\") colonPositions.push(i);
+        if (msg[i] === "#" && msg[i - 1] !== "\\") hashPositions.push(i);
     }
     const noData = colonPositions.length === 1;
+    const noOpts = hashPositions.length === 0;
     if (noData) colonPositions[1] = msg.length;     //to avoid crash
 
     const event = parseInt(msg.charCodeAt(0));
@@ -45,8 +47,23 @@ let parseMessage = function (msg, rinfo) {
     rinfo.name = name;
     const deviceOfName = devices.find(d => d.name === name) || null;
     const data = noData ? null : msg.substring(colonPositions[1] + 1, msg.length);
-    return new Message(event, data, deviceOfName, rinfo);
+
+    const opts = {};
+    for (let i in hashPositions) {
+        const optBoundary = i === hashPositions.size - 1 ? msg.length : hashPositions[i + 1];
+        const s_opt = msg.substring(hashPositions[i] + 1, optBoundary);
+        const i_equal = s_opt.indexOf("=");
+         if (i_equal === -1){
+             opts[s_opt]= true
+         } else {
+             opts[s_opt.substring(0, i_equal)] = s_opt.substring(i_equal + 1, s_opt.length)
+         }
+    }
+
+    return new Message(event, data, deviceOfName, rinfo, opts);
 };
+
+
 (function () {
     function runt(e) {
         console.log("Runt Message received");
