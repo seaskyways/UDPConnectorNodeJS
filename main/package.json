@@ -3,6 +3,7 @@
   "version": "0.0.1",
   "dependencies": {
     "ip": "latest",
-    "md5": "latest"
+    "md5": "latest",
+    "rxjs": "latest"
   }
 }

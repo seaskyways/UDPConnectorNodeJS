@@ -8,13 +8,16 @@ const Message = require("./util.js").Message;
 const server = dgram.createSocket('udp4');
 
 const Event = {
-    bus: new Rx.BehaviorSubject(false),
+    bus: new Rx.ReplaySubject(1),
     echo: 1,
     register: 2,
     connect: 3,
     beat: 4,
-    observe(code){
+    observe(code) {
         return this.bus.filter(msg => msg.event === code);
+    },
+    observeOption(opt) {
+        return this.bus.filter(msg => msg.options[opt] !== undefined);
     }
 };
 
@@ -46,24 +49,26 @@ let parseMessage = function (msg, rinfo) {
     const name = msg.substring(colonPositions[0] + 1, colonPositions[1]);
     rinfo.name = name;
     const deviceOfName = devices.find(d => d.name === name) || null;
-    const data = noData ? null : msg.substring(colonPositions[1] + 1, msg.length);
+    const data = noData ? null : msg.substring(colonPositions[1] + 1, hashPositions[0] || msg.length);
 
     const opts = {};
-    for (let i in hashPositions) {
-        const optBoundary = i === hashPositions.size - 1 ? msg.length : hashPositions[i + 1];
-        const s_opt = msg.substring(hashPositions[i] + 1, optBoundary);
-        const i_equal = s_opt.indexOf("=");
-         if (i_equal === -1){
-             opts[s_opt]= true
-         } else {
-             opts[s_opt.substring(0, i_equal)] = s_opt.substring(i_equal + 1, s_opt.length)
-         }
+    if (!noOpts) {
+        for (let i in hashPositions) {
+            i = parseInt(i);
+            const optBoundary = (hashPositions[i + 1] !== undefined) ? hashPositions[i + 1] : msg.length;
+            const s_opt = msg.substring(hashPositions[i] + 1, optBoundary);
+            const i_equal = s_opt.indexOf("=");
+            if (i_equal === -1) {
+                opts[s_opt] = true;
+            } else {
+                opts[s_opt.substring(0, i_equal)] = s_opt.substring(i_equal + 1, s_opt.length);
+            }
+        }
     }
-
     return new Message(event, data, deviceOfName, rinfo, opts);
 };
 
-
+//onMessage
 (function () {
     function runt(e) {
         console.log("Runt Message received");
@@ -83,6 +88,7 @@ let parseMessage = function (msg, rinfo) {
     });
 })();
 
+//eventHandlers
 (function () {
     function safe1(lambda) {
         return x1 => {
@@ -98,8 +104,6 @@ let parseMessage = function (msg, rinfo) {
         .subscribe(safe1(msg => {
             const deviceOfName = devices.find(d => d.name === msg.who.name);
             if (deviceOfName !== undefined) {
-                msg._event = Event.beat;
-                Event.bus.next(msg);
                 return;
             }
             const privateConnection = new Connection(msg.data.address, msg.data.port, false);
@@ -127,9 +131,7 @@ let parseMessage = function (msg, rinfo) {
 
     Event.observe(Event.connect)
         .subscribe(safe1(msg => {
-            console.log('Attempt connect', msg);
             const targetDevice = devices.find(d => d.name === msg.data);
-            console.log('Attempt connect to ', targetDevice);
             if (targetDevice) {
                 let conn = targetDevice.connection;
                 msg.device.connection.sendMessage(server, `{"event":"connect","address":"${conn.address}","port":"${conn.port}"}`);
@@ -137,8 +139,20 @@ let parseMessage = function (msg, rinfo) {
                 targetDevice.connection.sendMessage(server, `{"event":"connect","address":"${conn.address}","port":"${conn.port}"}`);
             }
         }));
-})();
 
+    Event.observeOption('ack')
+        .subscribe(safe1(msg => {
+            if (msg.device !== null)
+                msg.device.connection.sendMessage(server, `ack=${msg.options.ack}`)
+        }));
+
+    Event.bus.filter(msg => msg.device !== null)
+        .subscribe(safe1(msg => {
+            if (msg.device.additional.beat === undefined) msg.device.additional.beat = {};
+            msg.device.additional.beat.time = new Date();
+            console.log(`${msg.who.name}: sent beat: time = ${msg.device.additional.beat.time}`)
+        }));
+})();
 
 server.on('listening', () => {
     const address = server.address();
