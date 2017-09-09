@@ -1,9 +1,10 @@
 const dgram = require("dgram");
 const Rx = require("rxjs/Rx");
-const md5 = require('md5');
-const RemoteDevice = require("./util.js").RemoteDevice;
-const Connection = require("./util.js").Connection;
-const Message = require("./util.js").Message;
+// const md5 = require('md5');
+const ResponseMessage = require("./models").ResponseMessage;
+const RemoteDevice = require("./models.js").RemoteDevice;
+const Connection = require("./models.js").Connection;
+const Message = require("./models.js").Message;
 
 const server = dgram.createSocket('udp4');
 
@@ -27,70 +28,38 @@ const serverInfo = {
     port: 6580,
 };
 
-server.on('error', (err) => {
+server.on("error", (err) => {
     console.log(`server error:\n${err.stack}`);
     server.close();
 });
 
 
-let parseMessage = function (msg, rinfo) {
-    let colonPositions = [];
-    let hashPositions = [];
-    for (let i = 0; i < msg.length; i++) {
-        if (msg[i] === ":" && msg[i - 1] !== "\\") colonPositions.push(i);
-        if (msg[i] === "#" && msg[i - 1] !== "\\") hashPositions.push(i);
-    }
-    const noData = colonPositions.length === 1;
-    const noOpts = hashPositions.length === 0;
-    if (noData) colonPositions[1] = msg.length;     //to avoid crash
-
-    const event = parseInt(msg.charCodeAt(0));
-
-    const name = msg.substring(colonPositions[0] + 1, colonPositions[1]);
-    rinfo.name = name;
-    const deviceOfName = devices.find(d => d.name === name) || null;
-    const data = noData ? null : msg.substring(colonPositions[1] + 1, hashPositions[0] || msg.length);
-
-    const opts = {};
-    if (!noOpts) {
-        for (let i in hashPositions) {
-            i = parseInt(i);
-            const optBoundary = (hashPositions[i + 1] !== undefined) ? hashPositions[i + 1] : msg.length;
-            const s_opt = msg.substring(hashPositions[i] + 1, optBoundary);
-            const i_equal = s_opt.indexOf("=");
-            if (i_equal === -1) {
-                opts[s_opt] = true;
-            } else {
-                opts[s_opt.substring(0, i_equal)] = s_opt.substring(i_equal + 1, s_opt.length);
-            }
-        }
-    }
-    return new Message(event, data, deviceOfName, rinfo, opts);
-};
-
-//onMessage
-(function () {
-    function runt(e) {
+//region onMessage Handler
+// noinspection ConstantIfStatementJS
+if (true) {
+    let runt = (e) => {
         console.log("Runt Message received");
         console.error(e);
-    }
+    };
 
     server.on('message', (msg, rinfo) => {
         console.log(`server got: ${msg} from ${rinfo.address}:${rinfo.port}`);
         msg = msg.toString().trim();
         if (msg.length === 0) return runt('Blank Message');
         try {
-            msg = parseMessage(msg, rinfo);
+            msg = Message.parseString(msg, rinfo, devices);
             Event.bus.next(msg);
         } catch (e) {
             runt(e);
         }
     });
-})();
+}
+//endregion
 
-//eventHandlers
-(function () {
-    function safe1(lambda) {
+//region eventHandlers
+// noinspection ConstantIfStatementJS
+if (true) {
+    let safe1 = (lambda) => {
         return x1 => {
             try {
                 lambda(x1)
@@ -98,7 +67,7 @@ let parseMessage = function (msg, rinfo) {
                 console.error(e)
             }
         }
-    }
+    };
 
     Event.observe(Event.register)
         .subscribe(safe1(msg => {
@@ -110,11 +79,10 @@ let parseMessage = function (msg, rinfo) {
             const publicConnection = new Connection(msg.who.address, msg.who.port);
             const remoteDevice = new RemoteDevice(msg.who.name, privateConnection, publicConnection);
             devices.push(remoteDevice);
-            remoteDevice.connection.sendMessage(server, JSON.stringify(devices.map(d => d.name)));
-            remoteDevice.connection.sendMessage(server, JSON.stringify({
-                "event": "adminCode",
-                "code": remoteDevice.administrativeCode
-            }));
+            remoteDevice.connection.sendMessage(
+                server,
+                ResponseMessage.serialize("auth", {"code": remoteDevice.administrativeCode})
+            );
         }));
 
     Event.observe(Event.echo)
@@ -130,20 +98,26 @@ let parseMessage = function (msg, rinfo) {
         }));
 
     Event.observe(Event.connect)
+        .filter(msg => msg.device !== null)
+        .filter(msg => msg.options.auth === msg.device.administrativeCode)
         .subscribe(safe1(msg => {
             const targetDevice = devices.find(d => d.name === msg.data);
             if (targetDevice) {
                 let conn = targetDevice.connection;
-                msg.device.connection.sendMessage(server, `{"event":"connect","address":"${conn.address}","port":"${conn.port}"}`);
+                msg.device.connection.sendMessage(server,
+                    ResponseMessage.serialize("connect", {"address": conn.address, "port": conn.port})
+                );
                 conn = msg.device.connection;
-                targetDevice.connection.sendMessage(server, `{"event":"connect","address":"${conn.address}","port":"${conn.port}"}`);
+                targetDevice.connection.sendMessage(server,
+                    ResponseMessage.serialize("connect", {"address": conn.address, "port": conn.port})
+                );
             }
         }));
 
     Event.observeOption('ack')
+        .filter(msg => msg.device !== null)
         .subscribe(safe1(msg => {
-            if (msg.device !== null)
-                msg.device.connection.sendMessage(server, `ack=${msg.options.ack}`)
+            msg.device.connection.sendMessage(server, ResponseMessage.serialize("ack", {"ack": msg.options.ack}))
         }));
 
     Event.bus.filter(msg => msg.device !== null)
@@ -152,7 +126,8 @@ let parseMessage = function (msg, rinfo) {
             msg.device.additional.beat.time = new Date();
             console.log(`${msg.who.name}: sent beat: time = ${msg.device.additional.beat.time}`)
         }));
-})();
+}
+//endregion
 
 server.on('listening', () => {
     const address = server.address();
